@@ -3,6 +3,7 @@
 #
 # SPDX-License-Identifier: MIT
 
+# Works with 3.11 and tested through 3.15 (not tested yet)
 cmake_minimum_required(VERSION 3.14)
 
 
@@ -10,6 +11,8 @@ project(CLIPPy
     VERSION 0.1
     DESCRIPTION "Command Line Interface Plus Python"
     LANGUAGES CXX)
+
+include(FetchContent) 
 
 # Only do these if this is the main project, and not if it is included through add_subdirectory
 if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
@@ -40,60 +43,46 @@ if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
     endif()
 endif()
 
-#
-# Threads
-find_package(Threads REQUIRED)
 
+#  Nlohmann JSON
 #
-# Boost
-find_package(Boost 1.75 REQUIRED)
-
-include(FetchContent)
-
-#
-# Boost
-find_package(Boost 1.75 REQUIRED)
+include(ExternalProject)
+ExternalProject_Add(nlohmann_json
+    URL https://github.com/nlohmann/json/releases/download/v3.9.1/json.hpp
+    DOWNLOAD_NO_EXTRACT 1
+    LOG_DOWNLOAD 1
+    DOWNLOAD_DIR nlohmann_json/include/nlohmann/
+    BUILD_COMMAND ""
+    INSTALL_COMMAND ""
+    CONFIGURE_COMMAND ""
+    )
+set(NLOHMANN_JSON_INCLUDE_DIR ${PROJECT_BINARY_DIR}/nlohmann_json/include)
 
 #
 #  Metall
 find_package(Metall QUIET)
 if (NOT Metall_FOUND)
-    set (JUST_INSTALL_HEADER TRUE)
-    FetchContent_Declare(
-            Metall
-            GIT_REPOSITORY https://github.com/LLNL/metall.git
-            GIT_TAG develop
-    )
-    FetchContent_MakeAvailable(Metall)
+    #set(METALL_WORK_DIR ${CMAKE_CURRENT_BINARY_DIR}/metall-work)
+    set(METALL_SOURCE_DIR ${CMAKE_CURRENT_BINARY_DIR}/metall-src)
+    set(METALL_BUILD_DIR ${CMAKE_CURRENT_BINARY_DIR}/metall-build)
+    set(METALL_INSTALL_DIR ${CMAKE_CURRENT_BINARY_DIR}/metall-install)
+		FetchContent_Declare(Metall
+        GIT_REPOSITORY https://github.com/LLNL/metall.git
+        GIT_TAG master
+				)
+#        SOURCE_DIR ${METALL_SOURCE_DIR}
+#        BINARY_DIR ${METALL_BUILD_DIR}
+#        CMAKE_ARGS -DINSTALL_HEADER_ONLY=ON -DCMAKE_INSTALL_PREFIX=${METALL_INSTALL_DIR}
+#        )
+# set(METALL_INCLUDE_DIR ${METALL_INSTALL_DIR}/include)
+  FetchContent_MakeAvailable(Metall)
 endif ()
 
-#
-#  cereal
-FetchContent_Declare(cereal
-        URL https://github.com/USCiLab/cereal/archive/refs/tags/v1.3.0.zip
-        )
-FetchContent_GetProperties(cereal)
-if (NOT cereal_POPULATED)
-    FetchContent_Populate(cereal)
-endif ()
-set(cereal_INCLUDE_DIR "${cereal_SOURCE_DIR}/include")
+find_package(Threads REQUIRED)
 
 #
-#  MPI
-find_package(MPI)
-
-#
-#  YGM
-if (MPI_CXX_FOUND)
-    FetchContent_Declare(YGM
-            URL https://github.com/LLNL/ygm/archive/refs/heads/master.zip
-            )
-    FetchContent_GetProperties(YGM)
-    if (NOT ygm_POPULATED)
-        FetchContent_Populate(YGM)
-    endif ()
-    set(YGM_INCLUDE_DIR "${ygm_SOURCE_DIR}/include")
-endif ()
+# Boost
+find_package(Boost 1.75 REQUIRED COMPONENTS)
 
 ### Require out-of-source builds
 file(TO_CMAKE_PATH "${PROJECT_BINARY_DIR}/CMakeLists.txt" LOC_PATH)
