@@ -78,6 +78,65 @@ if (NOT Metall_FOUND)
   FetchContent_MakeAvailable(Metall)
 endif ()
 
+#
+#  cereal
+FetchContent_Declare(cereal
+        URL https://github.com/USCiLab/cereal/archive/refs/tags/v1.3.0.zip
+        )
+FetchContent_GetProperties(cereal)
+if (NOT cereal_POPULATED)
+    FetchContent_Populate(cereal)
+endif ()
+set(cereal_INCLUDE_DIR "${cereal_SOURCE_DIR}/include")
+
+#
+#  MPI
+find_package(MPI)
+
+#
+#  YGM
+if (MPI_CXX_FOUND)
+    find_package(YGM QUIET)
+    if (NOT YGM_FOUND)
+        set(JUST_INSTALL_YGM TRUE)
+        FetchContent_Declare(YGM
+                GIT_REPOSITORY https://github.com/LLNL/ygm.git
+                GIT_TAG b4fa3105184181a6f6899200e61e4d06dee56903 # master
+                )
+        FetchContent_GetProperties(YGM)
+        if (NOT ygm_POPULATED)
+            FetchContent_Populate(YGM)
+        endif ()
+        set(YGM_INCLUDE_DIR "${ygm_SOURCE_DIR}/include")
+        # FetchContent_MakeAvailable(YGM)
+    endif ()
+endif ()
+
+#
+#  ZSTD
+#
+find_package(zstd QUIET)
+if (NOT zstd_FOUND)
+  FetchContent_Declare(zstd
+          GIT_REPOSITORY https://github.com/facebook/zstd.git
+          GIT_TAG v1.5.4
+          )
+  FetchContent_MakeAvailable(zstd)
+  list(APPEND CMAKE_MODULE_PATH "${zstd_SOURCE_DIR}/build/cmake")
+endif ()
+
+#
+# Privateer
+#
+find_package(Privateer QUIET)
+if (NOT Privateer_FOUND)
+   FetchContent_Declare(Privateer
+           GIT_REPOSITORY https://github.com/LLNL/Privateer.git
+           GIT_TAG feature/sigaction
+           )
+   FetchContent_MakeAvailable(Privateer)
+endif ()
+
 find_package(Threads REQUIRED)
 
 #
