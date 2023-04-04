@@ -35,6 +35,12 @@ namespace json_logic
     using base::base;
   };
 
+  struct type_error : std::runtime_error
+  {
+    using base = std::runtime_error;
+    using base::base;
+  };
+
   template <class Error = std::runtime_error, class T>
   T& deref(T* p, const char* msg = "assertion failed")
   {
@@ -82,7 +88,8 @@ namespace json_logic
   // foundation classes
   // \{
 
-  using AnyExpr = std::unique_ptr<Expr>;
+  using AnyExpr   = std::unique_ptr<Expr>;
+  using ValueExpr = std::unique_ptr<Expr>; // \todo consider std::unique_ptr<Value>
 
   struct Operator : Expr, private std::vector<AnyExpr>
   {
@@ -101,12 +108,14 @@ namespace json_logic
     using container_type::back;
     using container_type::push_back;
     using container_type::size;
+    using container_type::at;
 
     // convenience function so that the constructor does not need to be implemented
     // in every derived class.
     void set_operands(container_type&& opers) { this->swap(opers); }
 
     container_type& operands() { return *this; }
+    container_type&& move_operands() && { return std::move(*this); }
 
     Expr& operand(int n) const
     {
@@ -270,10 +279,33 @@ namespace json_logic
 
 
   // array
-  struct Array     : Operator  // array is modeled as operator
+
+  // arrays serve a dual purpose
+  //   they can be considered collections, but also an aggregate value
+  // The class is final and it supports move ctor/assignment, so the data
+  //   can move efficiently.
+  struct Array final : Operator  // array is modeled as operator
   {
       void accept(Visitor&) final;
+
+      // define
+      Array() = default;
+      Array(Array&&);
+      Array& operator=(Array&&);
   };
+
+  Array::Array(Array&& other)
+  : Operator()
+  {
+    set_operands(std::move(other).move_operands());
+  }
+
+  Array&
+  Array::operator=(Array&& other)
+  {
+    set_operands(std::move(other).move_operands());
+    return *this;
+  }
 
   struct Map       : OperatorN<2>
   {
@@ -553,7 +585,7 @@ namespace json_logic
   struct FwdVisitor : Visitor
   {
     void visit(Expr&)         override {} // error
-    void visit(Operator& n)   override { visit(up_cast<Operator>(n)); }
+    void visit(Operator& n)   override { visit(up_cast<Expr>(n)); }
     void visit(Eq& n)         override { visit(up_cast<Operator>(n)); }
     void visit(StrictEq& n)   override { visit(up_cast<Operator>(n)); }
     void visit(Neq& n)        override { visit(up_cast<Operator>(n)); }
@@ -674,7 +706,13 @@ namespace json_logic
     CXX_NORETURN
     void typeError()
     {
-      throw std::runtime_error("typing error");
+      throw type_error("typing error");
+    }
+
+    CXX_NORETURN
+    void requiresArgumentError()
+    {
+      throw std::runtime_error("insufficient arguments");
     }
 
     struct VarMap
@@ -914,7 +952,7 @@ namespace json_logic
       AnyExpr node = translateNode_internal(n, varmap);
       bool    hasComputedVariables = varmap.hasComputedVariables();
 
-      return std::make_tuple(std::move(node), varmap.toVector(), hasComputedVariables);
+      return { std::move(node), varmap.toVector(), hasComputedVariables };
     }
 
     Operator::container_type
@@ -945,8 +983,6 @@ namespace json_logic
       return res;
     }
   }
-
-  using ValueExpr = std::unique_ptr<Expr>; // could be value if we have a type for that
 
   std::ostream& operator<<(std::ostream& os, ValueExpr& n);
 
@@ -1014,26 +1050,15 @@ namespace json_logic
   struct CoercionError {};
   struct OutsideOfInt64Range  : CoercionError {};
   struct OutsideOfUint64Range : CoercionError {};
+  struct UnpackedArrayRequired : CoercionError {};
 
   /// conversion to int64
   /// \{
-  inline
-  std::int64_t toConcreteValue(const json::string& str, const std::int64_t&)
-  {
-    return std::stoi(std::string{str.c_str()});
-  }
-
-  inline
-  std::int64_t toConcreteValue(double d, const std::int64_t&)
-  {
-    return d;
-  }
-
-  inline
-  std::int64_t toConcreteValue(bool b, const std::int64_t&)
-  {
-    return b;
-  }
+  inline std::int64_t toConcreteValue(std::int64_t v, const std::int64_t&)          { return v; }
+  inline std::int64_t toConcreteValue(const json::string& str, const std::int64_t&) { return std::stoll(std::string{str.c_str()}); }
+  inline std::int64_t toConcreteValue(double v, const std::int64_t&)                { return v; }
+  inline std::int64_t toConcreteValue(bool v, const std::int64_t&)                  { return v; }
+  inline std::int64_t toConcreteValue(std::nullptr_t, const std::int64_t&)          { return 0; }
 
   inline
   std::int64_t toConcreteValue(std::uint64_t v, const std::int64_t&)
@@ -1046,30 +1071,17 @@ namespace json_logic
 
     return v;
   }
-
-  inline
-  std::int64_t toConcreteValue(std::int64_t v, const std::int64_t&)
-  {
-    return v;
-  }
   /// \}
 
   /// conversion to uint64
   /// \{
-  inline
-  std::uint64_t toConcreteValue(const json::string& str, const std::uint64_t&)
-  {
-    return std::stoull(std::string{str.c_str()});
-  }
+  inline std::uint64_t toConcreteValue(std::uint64_t v, const std::uint64_t&)         { return v; }
+  inline std::uint64_t toConcreteValue(const json::string& str, const std::uint64_t&) { return std::stoull(std::string{str.c_str()}); }
+  inline std::uint64_t toConcreteValue(double v, const std::uint64_t&)                { return v; }
+  inline std::uint64_t toConcreteValue(bool v, const std::uint64_t&)                  { return v; }
+  inline std::uint64_t toConcreteValue(std::nullptr_t, const std::uint64_t&)          { return 0; }
 
-  inline
-  std::uint64_t toConcreteValue(double d, const std::uint64_t&)
-  {
-    return d;
-  }
-
-  inline
-  std::uint64_t toConcreteValue(std::int64_t v, const std::uint64_t&)
+  inline std::uint64_t toConcreteValue(std::int64_t v, const std::uint64_t&)
   {
     if (v < 0)
     {
@@ -1079,111 +1091,94 @@ namespace json_logic
 
     return v;
   }
-
-  inline
-  std::uint64_t toConcreteValue(std::uint64_t v, const std::uint64_t&)
-  {
-    return v;
-  }
-
-  inline
-  std::uint64_t toConcreteValue(bool b, const std::uint64_t&)
-  {
-    return b;
-  }
   /// \}
 
   /// conversion to double
   /// \{
-  inline
-  double toConcreteValue(const json::string& str, const double&)
-  {
-    return std::stod(std::string{str.c_str()});
-  }
-
-  inline
-  double toConcreteValue(std::int64_t val, const double&)
-  {
-    return val;
-  }
-
-  inline
-  double toConcreteValue(std::uint64_t val, const double&)
-  {
-    return val;
-  }
-
-  inline
-  double toConcreteValue(double val, const double&)
-  {
-    return val;
-  }
+  inline double toConcreteValue(const json::string& str, const double&) { return std::stod(std::string{str.c_str()}); }
+  inline double toConcreteValue(std::int64_t v, const double&)          { return v; }
+  inline double toConcreteValue(std::uint64_t v, const double&)         { return v; }
+  inline double toConcreteValue(double v, const double&)                { return v; }
+  inline double toConcreteValue(bool v, const double&)                  { return v; }
+  inline double toConcreteValue(std::nullptr_t, const double&)          { return 0; }
   /// \}
 
   /// conversion to string
   /// \{
   template <class Val>
-  inline
-  json::string toConcreteValue(Val v, const json::string&)
-  {
-    return json::string{std::to_string(v)};
-  }
+  inline json::string toConcreteValue(Val v, const json::string&)                 { return json::string{std::to_string(v)}; }
 
-  inline
-  json::string toConcreteValue(bool b, const json::string&)
-  {
-    return json::string{b ? "true" : "false"};
-  }
-
-  inline
-  json::string toConcreteValue(const json::string& s, const json::string&)
-  {
-    return s;
-  }
-
-  inline
-  json::string toConcreteValue(std::nullptr_t, const json::string&)
-  {
-    return json::string{"null"};
-  }
+  inline json::string toConcreteValue(bool v, const json::string&)                { return json::string{v ? "true" : "false"}; }
+  inline json::string toConcreteValue(const json::string& s, const json::string&) { return s; }
+  inline json::string toConcreteValue(std::nullptr_t, const json::string&)        { return json::string{"null"}; }
   /// \}
 
 
   /// conversion to boolean
+  ///   implements truthy, falsy as described by https://jsonlogic.com/truthy.html
   /// \{
+  inline bool toConcreteValue(bool v, const bool&)                { return v; }
   inline bool toConcreteValue(std::int64_t v, const bool&)        { return v; }
   inline bool toConcreteValue(std::uint64_t v, const bool&)       { return v; }
   inline bool toConcreteValue(double v, const bool&)              { return v; }
   inline bool toConcreteValue(const json::string& v, const bool&) { return v.size() != 0; }
-  inline bool toConcreteValue(Array& v, const bool&)              { return v.num_evaluated_operands(); }
+  inline bool toConcreteValue(std::nullptr_t, const bool&)        { return false; }
+
+  // \todo not sure if conversions from arrays to values should be supported like this
+  inline bool toConcreteValue(const Array& v, const bool&)        { return v.num_evaluated_operands(); }
   /// \}
 
-
-  struct LogicalOperatorBase
+  struct ComparisonOperatorBase
   {
     enum
     {
       definedForString  = true,
       definedForDouble  = true,
       definedForInteger = true,
-      definedForBool    = false,
-      definedForNull    = false,
-      definedForArray   = false
+      definedForBool    = true,
+      definedForNull    = true,
+      definedForArray   = true
     };
 
     using result_type   = bool;
   };
 
-  /// \brief a strict binary operator operates on operands of the same
+  /// \brief a strict equality operator operates on operands of the same
   ///        type. The operation on two different types returns false.
   ///        NO type coercion is performed.
-  struct StrictLogicalBinaryOperator : LogicalOperatorBase
+  struct StrictEqualityOperator : ComparisonOperatorBase
   {
+    std::tuple<bool, bool>
+    coerce(Array*, Array*)
+    {
+      return { true, false }; // arrays are never equal
+    }
+
     template <class LhsT, class RhsT>
     std::tuple<LhsT, RhsT>
     coerce(LhsT* lv, RhsT* rv)
     {
-      return std::make_tuple(std::move(*lv), std::move(*rv));
+      return { std::move(*lv), std::move(*rv) };
+    }
+
+    std::tuple<std::nullptr_t, std::nullptr_t>
+    coerce(std::nullptr_t, std::nullptr_t)
+    {
+      return { nullptr, nullptr }; // two null pointers are equal
+    }
+
+    template <class LhsT>
+    std::tuple<LhsT, std::nullptr_t>
+    coerce(LhsT* lv, std::nullptr_t)
+    {
+      return { std::move(*lv), nullptr };
+    }
+
+    template <class RhsT>
+    std::tuple<std::nullptr_t, RhsT>
+    coerce(std::nullptr_t, RhsT* rv)
+    {
+      return { nullptr, std::move(*rv) };
     }
   };
 
@@ -1192,106 +1187,353 @@ namespace json_logic
     std::tuple<double, double>
     coerce(double* lv, double* rv)
     {
-      return std::make_tuple(*lv, *rv);
+      return { *lv, *rv };
     }
 
     std::tuple<double, double>
     coerce(double* lv, std::int64_t* rv)
     {
-      return std::make_tuple(*lv, toConcreteValue(*rv, *lv));
+      return { *lv, toConcreteValue(*rv, *lv) };
     }
 
     std::tuple<double, double>
     coerce(double* lv, std::uint64_t* rv)
     {
-      return std::make_tuple(*lv, toConcreteValue(*rv, *lv));
+      return { *lv, toConcreteValue(*rv, *lv) };
     }
 
     std::tuple<double, double>
     coerce(std::int64_t* lv, double* rv)
     {
-      return std::make_tuple(toConcreteValue(*lv, *rv), *rv);
+      return { toConcreteValue(*lv, *rv), *rv };
     }
 
     std::tuple<std::int64_t, std::int64_t>
     coerce(std::int64_t* lv, std::int64_t* rv)
     {
-      return std::make_tuple(*lv, *rv);
+      return { *lv, *rv };
     }
 
     std::tuple<std::int64_t, std::int64_t>
     coerce(std::int64_t* lv, std::uint64_t* rv)
     {
-      return std::make_tuple(*lv, toConcreteValue(*rv, *lv));
+      return { *lv, toConcreteValue(*rv, *lv) };
     }
 
     std::tuple<double, double>
     coerce(std::uint64_t* lv, double* rv)
     {
-      return std::make_tuple(toConcreteValue(*lv, *rv), *rv);
+      return { toConcreteValue(*lv, *rv), *rv };
     }
 
     std::tuple<std::int64_t, std::int64_t>
     coerce(std::uint64_t* lv, std::int64_t* rv)
     {
-      return std::make_tuple(toConcreteValue(*lv, *rv), *rv);
+      return { toConcreteValue(*lv, *rv), *rv };
     }
 
     std::tuple<std::uint64_t, std::uint64_t>
     coerce(std::uint64_t* lv, std::uint64_t* rv)
     {
-      return std::make_tuple(*lv, *rv);
+      return { *lv, *rv };
     }
   };
 
 
-  /// \brief a logical binary operator compares two values. If the
+  /// \brief an equality operator compares two values. If the
   ///        values have a different type, type coercion is performed
   ///        on one of the operands.
-  struct LogicalBinaryOperator : NumericBinaryOperatorBase, LogicalOperatorBase
+  struct RelationalOperatorBase : NumericBinaryOperatorBase
   {
     using NumericBinaryOperatorBase::coerce;
 
     std::tuple<double, double>
     coerce(double* lv, json::string* rv)
     {
-      return std::make_tuple(*lv, toConcreteValue(*rv, *lv));
+      return { *lv, toConcreteValue(*rv, *lv) };
+    }
+
+    std::tuple<double, double>
+    coerce(double* lv, bool* rv)
+    {
+      return { *lv, toConcreteValue(*rv, *lv) };
     }
 
     std::tuple<std::int64_t, std::int64_t>
     coerce(std::int64_t* lv, json::string* rv)
     {
-      return std::make_tuple(*lv, toConcreteValue(*rv, *lv));
+      return { *lv, toConcreteValue(*rv, *lv) };
+    }
+
+    std::tuple<std::int64_t, std::int64_t>
+    coerce(std::int64_t* lv, bool* rv)
+    {
+      return { *lv, toConcreteValue(*rv, *lv) };
     }
 
     std::tuple<std::uint64_t, std::uint64_t>
     coerce(std::uint64_t* lv, json::string* rv)
     {
-      return std::make_tuple(*lv, toConcreteValue(*rv, *lv));
+      return { *lv, toConcreteValue(*rv, *lv) };
+    }
+
+    std::tuple<std::uint64_t, std::uint64_t>
+    coerce(std::uint64_t* lv, bool* rv)
+    {
+      return { *lv, toConcreteValue(*rv, *lv) };
     }
 
     std::tuple<double, double>
     coerce(json::string* lv, double* rv)
     {
-      return std::make_tuple(toConcreteValue(*lv, *rv), *rv);
+      return { toConcreteValue(*lv, *rv), *rv };
+    }
+
+    std::tuple<double, double>
+    coerce(bool* lv, double* rv)
+    {
+      return { toConcreteValue(*lv, *rv), *rv };
     }
 
     std::tuple<std::int64_t, std::int64_t>
     coerce(json::string* lv, std::int64_t* rv)
     {
-      return std::make_tuple(toConcreteValue(*lv, *rv), *rv);
+      return { toConcreteValue(*lv, *rv), *rv };
+    }
+
+    std::tuple<std::int64_t, std::int64_t>
+    coerce(bool* lv, std::int64_t* rv)
+    {
+      return { toConcreteValue(*lv, *rv), *rv };
     }
 
     std::tuple<std::uint64_t, std::uint64_t>
     coerce(json::string* lv, std::uint64_t* rv)
     {
-      return std::make_tuple(toConcreteValue(*lv, *rv), *rv);
+      return { toConcreteValue(*lv, *rv), *rv };
+    }
+
+    std::tuple<std::uint64_t, std::uint64_t>
+    coerce(bool* lv, std::uint64_t* rv)
+    {
+      return { toConcreteValue(*lv, *rv), *rv };
+    }
+
+    std::tuple<bool, bool>
+    coerce(json::string*, bool* rv)
+    {
+      // strings and boolean are never equal
+      return { !*rv, *rv };
+    }
+
+    std::tuple<bool, bool>
+    coerce(bool* lv, json::string*)
+    {
+      // strings and boolean are never equal
+      return { *lv, !*lv };
     }
 
     std::tuple<json::string, json::string>
     coerce(json::string* lv, json::string* rv)
     {
-      return std::make_tuple(std::move(*lv), std::move(*rv));
+      return { std::move(*lv), std::move(*rv) };
+    }
+
+    std::tuple<bool, bool>
+    coerce(bool* lv, bool* rv)
+    {
+      return { *lv, *rv };
+    }
+  };
+
+  struct EqualityOperator   : RelationalOperatorBase, ComparisonOperatorBase
+  {
+    using RelationalOperatorBase::coerce;
+
+    // due to special conversion rules, the coercion function may just produce
+    //   the result instead of just unpacking and coercing values.
+
+    std::tuple<bool, bool>
+    coerce(Array*, Array*)
+    {
+      return { true, false }; // arrays are never equal
+    }
+
+    template <class T>
+    std::tuple<bool, bool>
+    coerce(T* lv, Array* rv)
+    {
+      // an array may be compared to a value
+      //   (1) *lv == arr[0], iff the array has exactly one element
+      if (rv->num_evaluated_operands() == 1)
+        throw UnpackedArrayRequired{};
+
+      //   (2) or if [] and *lv converts to false
+      if (rv->num_evaluated_operands() > 1)
+        return { false, true };
+
+      const bool convToFalse = toConcreteValue(*lv, false) == false;
+
+      return { convToFalse, true /* zero elements */ };
+    }
+
+    template <class T>
+    std::tuple<bool, bool>
+    coerce(Array* lv, T* rv)
+    {
+      // see comments in coerce(T*,Array*)
+      if (lv->num_evaluated_operands() == 1)
+        throw UnpackedArrayRequired{};
+
+      if (lv->num_evaluated_operands() > 1)
+        return { false, true };
+
+      const bool convToFalse = toConcreteValue(*rv, false) == false;
+
+      return { true /* zero elements */, convToFalse };
+    }
+
+    std::tuple<std::nullptr_t, std::nullptr_t>
+    coerce(std::nullptr_t, std::nullptr_t)
+    {
+      return { nullptr, nullptr }; // two null pointers are equal
+    }
+
+    template <class T>
+    std::tuple<bool, bool>
+    coerce(T*, std::nullptr_t)
+    {
+      return { false, true }; // null pointer is only equal to itself
+    }
+
+    template <class T>
+    std::tuple<bool, bool>
+    coerce(std::nullptr_t, T*)
+    {
+      return { true, false }; // null pointer is only equal to itself
+    }
+
+    std::tuple<bool, bool>
+    coerce(Array*, std::nullptr_t)
+    {
+      return { true, false }; // null pointer is only equal to itself
+    }
+
+    std::tuple<bool, bool>
+    coerce(std::nullptr_t, Array*)
+    {
+      return { true, false }; // null pointer is only equal to itself
+    }
+  };
+
+  struct RelationalOperator : RelationalOperatorBase, ComparisonOperatorBase
+  {
+    using RelationalOperatorBase::coerce;
+
+    std::tuple<Array*, Array*>
+    coerce(Array* lv, Array* rv)
+    {
+      return { lv, rv };
+    }
+
+    template <class T>
+    std::tuple<bool, bool>
+    coerce(T* lv, Array* rv)
+    {
+      // an array may be equal to another value if
+      //   (1) *lv == arr[0], iff the array has exactly one element
+      if (rv->num_evaluated_operands() == 1)
+        throw UnpackedArrayRequired{};
+
+      //   (2) or if [] and *lv converts to false
+      if (rv->num_evaluated_operands() > 1)
+        return { false, true };
+
+      const bool convToTrue = toConcreteValue(*lv, true) == true;
+
+      return { convToTrue, false /* zero elements */ };
+    }
+
+    template <class T>
+    std::tuple<bool, bool>
+    coerce(Array* lv, T* rv)
+    {
+      // see comments in coerce(T*,Array*)
+      if (lv->num_evaluated_operands() == 1)
+        throw UnpackedArrayRequired{};
+
+      if (lv->num_evaluated_operands() > 1)
+        return { false, true };
+
+      const bool convToTrue = toConcreteValue(*rv, true) == true;
+
+      return { false /* zero elements */, convToTrue };
+    }
+
+    std::tuple<std::nullptr_t, std::nullptr_t>
+    coerce(std::nullptr_t, std::nullptr_t)
+    {
+      return { nullptr, nullptr }; // two null pointers are equal
+    }
+
+    std::tuple<bool, bool>
+    coerce(bool* lv, std::nullptr_t)
+    {
+      return { *lv, false }; // null pointer -> false
+    }
+
+    std::tuple<std::int64_t, std::int64_t>
+    coerce(std::int64_t* lv, std::nullptr_t)
+    {
+      return { *lv, 0 }; // null pointer -> 0
+    }
+
+    std::tuple<std::uint64_t, std::uint64_t>
+    coerce(std::uint64_t* lv, std::nullptr_t)
+    {
+      return { *lv, 0 }; // null pointer -> 0
+    }
+
+    std::tuple<double, double>
+    coerce(double* lv, std::nullptr_t)
+    {
+      return { *lv, 0 }; // null pointer -> 0.0
+    }
+
+    std::tuple<json::string, std::nullptr_t>
+    coerce(json::string* lv, std::nullptr_t)
+    {
+      return { std::move(*lv), nullptr }; // requires special handling
+    }
+
+    std::tuple<bool, bool>
+    coerce(std::nullptr_t, bool* rv)
+    {
+      return { false, *rv }; // null pointer -> false
+    }
+
+    std::tuple<std::int64_t, std::int64_t>
+    coerce(std::nullptr_t, std::int64_t* rv)
+    {
+      return { 0, *rv }; // null pointer -> 0
+    }
+
+    std::tuple<std::uint64_t, std::uint64_t>
+    coerce(std::nullptr_t, std::uint64_t* rv)
+    {
+      return { 0, *rv }; // null pointer -> 0
+    }
+
+    std::tuple<double, double>
+    coerce(std::nullptr_t, double* rv)
+    {
+      return { 0, *rv }; // null pointer -> 0
+    }
+
+    std::tuple<std::nullptr_t, json::string>
+    coerce(std::nullptr_t, json::string* rv)
+    {
+      return { nullptr, std::move(*rv) }; // requires special handling
     }
   };
   // @}
@@ -1316,43 +1558,43 @@ namespace json_logic
     std::tuple<std::nullptr_t, std::nullptr_t>
     coerce(double*, std::nullptr_t)
     {
-      return std::make_tuple(nullptr, nullptr);
+      return { nullptr, nullptr };
     }
 
     std::tuple<std::nullptr_t, std::nullptr_t>
     coerce(std::int64_t*, std::nullptr_t)
     {
-      return std::make_tuple(nullptr, nullptr);
+      return { nullptr, nullptr };
     }
 
     std::tuple<std::nullptr_t, std::nullptr_t>
     coerce(std::uint64_t*, std::nullptr_t)
     {
-      return std::make_tuple(nullptr, nullptr);
+      return { nullptr, nullptr };
     }
 
     std::tuple<std::nullptr_t, std::nullptr_t>
     coerce(std::nullptr_t, double*)
     {
-      return std::make_tuple(nullptr, nullptr);
+      return { nullptr, nullptr };
     }
 
     std::tuple<std::nullptr_t, std::nullptr_t>
     coerce(std::nullptr_t, std::int64_t*)
     {
-      return std::make_tuple(nullptr, nullptr);
+      return { nullptr, nullptr };
     }
 
     std::tuple<std::nullptr_t, std::nullptr_t>
     coerce(std::nullptr_t, std::uint64_t*)
     {
-      return std::make_tuple(nullptr, nullptr);
+      return { nullptr, nullptr };
     }
 
     std::tuple<std::nullptr_t, std::nullptr_t>
     coerce(std::nullptr_t, std::nullptr_t)
     {
-      return std::make_tuple(nullptr, nullptr);
+      return { nullptr, nullptr };
     }
   };
 
@@ -1388,7 +1630,7 @@ namespace json_logic
     std::tuple<json::string, json::string>
     coerce(json::string* lv, json::string* rv)
     {
-      return std::make_tuple(std::move(*lv), std::move(*rv));
+      return { std::move(*lv), std::move(*rv) };
     }
   };
 
@@ -1409,17 +1651,14 @@ namespace json_logic
     std::tuple<Array*, Array*>
     coerce(Array* lv, Array* rv)
     {
-      return std::make_tuple(lv, rv);
+      return { lv, rv };
     }
   };
-
-
 
   AnyExpr convert(AnyExpr val, ...)
   {
     return val;
   }
-
 
   AnyExpr convert(AnyExpr val, const ArithmeticOperator&)
   {
@@ -1649,12 +1888,12 @@ namespace json_logic
         assign(res, el.value());
       }
 
-      void visit(IntVal& el)    final
+      void visit(IntVal& el) final
       {
         assign(res, el.value());
       }
 
-      void visit(UintVal& el)   final
+      void visit(UintVal& el) final
       {
         assign(res, el.value());
       }
@@ -1664,9 +1903,17 @@ namespace json_logic
         assign(res, el.value());
       }
 
-      void visit(NullVal& el)      final
+      void visit(NullVal& el) final
       {
         assign(res, el.value());
+      }
+
+      void visit(Array& el) final
+      {
+        if constexpr (std::is_same<ValueT, bool>::value)
+          return assign(res, el);
+
+        typeError();
       }
 
       ValueT result() && { return std::move(res); }
@@ -1684,33 +1931,6 @@ namespace json_logic
     expr.accept(unpack);
     return std::move(unpack).result();
   }
-
-
-
-/*
-  bool toBool(Expr& e)
-  {
-    struct BoolConverter : FwdVisitor
-    {
-      void visit(Expr&)        final { typeError(); }
-
-      void visit(NullVal&)     final { res = false; }
-      void visit(BoolVal& n)   final { res = n.value(); }
-      void visit(IntVal& n)    final { res = toConcreteValue(n.value(), bool{}); }
-      void visit(UintVal& n)   final { res = toConcreteValue(n.value(), bool{}); }
-      void visit(DoubleVal& n) final { res = toConcreteValue(n.value(), bool{}); }
-      void visit(StringVal& n) final { res = toConcreteValue(n.value(), bool{}); }
-      void visit(Array& n)     final { res = toConcreteValue(n, bool{}); }
-
-      bool res;
-    };
-
-    BoolConverter conv;
-
-    e.accept(conv);
-    return conv.res;
-  }
-*/
 
   template <class T>
   T unpackValue(ValueExpr& el)
@@ -1868,7 +2088,19 @@ namespace json_logic
       void visit(Array& n) final
       {
         if constexpr (BinaryOperator::definedForArray)
-          return calc(&n);
+        {
+          try
+          {
+            calc(&n);
+          }
+          catch (const UnpackedArrayRequired&)
+          {
+            assert(n.num_evaluated_operands() == 1);
+            n.operand(0).accept(*this);
+          }
+
+          return;
+        }
 
         typeError();
       }
@@ -1984,7 +2216,19 @@ namespace json_logic
       void visit(Array& n) final
       {
         if constexpr (BinaryOperator::definedForArray)
-          return calc(&n);
+        {
+          try
+          {
+            calc(&n);
+          }
+          catch (const UnpackedArrayRequired&)
+          {
+            assert(n.num_evaluated_operands() == 1);
+            n.operand(0).accept(*this);
+          }
+
+          return;
+        }
 
         typeError();
       }
@@ -2010,16 +2254,53 @@ namespace json_logic
     return std::move(vis).result();
   }
 
+  template <class BinaryPredicate>
+  bool compareSeq(Array& lv, Array& rv, BinaryPredicate pred)
+  {
+    const std::size_t lsz = lv.num_evaluated_operands();
+    const std::size_t rsz = rv.num_evaluated_operands();
+
+    if (lsz == 0)
+      return pred( false, rsz != 0 );
+
+    if (rsz == 0)
+      return pred( true, false );
+
+    std::size_t const len   = std::min(lsz, rsz);
+    std::size_t       i     = 0;
+    bool              res   = false;
+    bool              found = false;
+
+    while ((i < len) && !found)
+    {
+      res   = compute(lv.at(i), rv.at(i), pred);
+
+      // res is conclusive if the reverse test yields a different result
+      found = res != compute(rv.at(i), lv.at(i), pred);
+
+      ++i;
+    }
+
+    return found ? res : pred(lsz, rsz);
+  }
+
+
+  template <class BinaryPredicate>
+  bool compareSeq(Array* lv, Array* rv, BinaryPredicate pred)
+  {
+    return compareSeq(deref(lv), deref(rv), std::move(pred));
+  }
 
 
   template <class>
   struct Calc {};
 
-
   template <>
-  struct Calc<Eq> : LogicalBinaryOperator
+  struct Calc<Eq> : EqualityOperator
   {
-    using LogicalBinaryOperator::result_type;
+    using EqualityOperator::result_type;
+
+    result_type operator()(...) const { return false; } // type mismatch
 
     template <class T>
     result_type
@@ -2030,9 +2311,11 @@ namespace json_logic
   };
 
   template <>
-  struct Calc<Neq> : LogicalBinaryOperator
+  struct Calc<Neq> : EqualityOperator
   {
-    using LogicalBinaryOperator::result_type;
+    using EqualityOperator::result_type;
+
+    result_type operator()(...) const { return true; } // type mismatch
 
     template <class T>
     result_type
@@ -2043,9 +2326,9 @@ namespace json_logic
   };
 
   template <>
-  struct Calc<StrictEq> : StrictLogicalBinaryOperator
+  struct Calc<StrictEq> : StrictEqualityOperator
   {
-    using StrictLogicalBinaryOperator::result_type;
+    using StrictEqualityOperator::result_type;
 
     result_type operator()(...) const { return false; } // type mismatch
 
@@ -2058,24 +2341,48 @@ namespace json_logic
   };
 
   template <>
-  struct Calc<StrictNeq> : StrictLogicalBinaryOperator
+  struct Calc<StrictNeq> : StrictEqualityOperator
   {
-    using StrictLogicalBinaryOperator::result_type;
+    using StrictEqualityOperator::result_type;
 
-    result_type operator()(...) const { return false; } // type mismatch
+    result_type operator()(...) const { return true; } // type mismatch
 
     template <class T>
     result_type
     operator()(const T& lhs, const T& rhs) const
     {
-      return lhs == rhs;
+      return lhs != rhs;
     }
   };
 
   template <>
-  struct Calc<Less> : LogicalBinaryOperator
+  struct Calc<Less> : RelationalOperator
   {
-    using LogicalBinaryOperator::result_type;
+    using RelationalOperator::result_type;
+
+    result_type
+    operator()(const std::nullptr_t, std::nullptr_t) const
+    {
+      return false;
+    }
+
+    result_type
+    operator()(Array* lv, Array* rv) const
+    {
+      return compareSeq(lv, rv, *this);
+    }
+
+    result_type
+    operator()(const json::string&, std::nullptr_t) const
+    {
+      return false;
+    }
+
+    result_type
+    operator()(std::nullptr_t, const json::string&) const
+    {
+      return false;
+    }
 
     template <class T>
     result_type
@@ -2086,9 +2393,33 @@ namespace json_logic
   };
 
   template <>
-  struct Calc<Greater> : LogicalBinaryOperator
+  struct Calc<Greater> : RelationalOperator
   {
-    using LogicalBinaryOperator::result_type;
+    using RelationalOperator::result_type;
+
+    result_type
+    operator()(const std::nullptr_t, std::nullptr_t) const
+    {
+      return false;
+    }
+
+    result_type
+    operator()(Array* lv, Array* rv) const
+    {
+      return compareSeq(lv, rv, *this);
+    }
+
+    result_type
+    operator()(const json::string&, std::nullptr_t) const
+    {
+      return false;
+    }
+
+    result_type
+    operator()(std::nullptr_t, const json::string&) const
+    {
+      return false;
+    }
 
     template <class T>
     result_type
@@ -2099,9 +2430,33 @@ namespace json_logic
   };
 
   template <>
-  struct Calc<Leq> : LogicalBinaryOperator
+  struct Calc<Leq> : RelationalOperator
   {
-    using LogicalBinaryOperator::result_type;
+    using RelationalOperator::result_type;
+
+    result_type
+    operator()(const std::nullptr_t, std::nullptr_t) const
+    {
+      return true;
+    }
+
+    result_type
+    operator()(Array* lv, Array* rv) const
+    {
+      return compareSeq(lv, rv, *this);
+    }
+
+    result_type
+    operator()(const json::string& lhs, std::nullptr_t) const
+    {
+      return lhs.empty();
+    }
+
+    result_type
+    operator()(std::nullptr_t, const json::string& rhs) const
+    {
+      return rhs.empty();
+    }
 
     template <class T>
     result_type
@@ -2112,9 +2467,33 @@ namespace json_logic
   };
 
   template <>
-  struct Calc<Geq> : LogicalBinaryOperator
+  struct Calc<Geq> : RelationalOperator
   {
-    using LogicalBinaryOperator::result_type;
+    using RelationalOperator::result_type;
+
+    result_type
+    operator()(const std::nullptr_t, std::nullptr_t) const
+    {
+      return true;
+    }
+
+    result_type
+    operator()(Array* lv, Array* rv) const
+    {
+      return compareSeq(lv, rv, *this);
+    }
+
+    result_type
+    operator()(const json::string& lhs, std::nullptr_t) const
+    {
+      return lhs.empty();
+    }
+
+    result_type
+    operator()(std::nullptr_t, const json::string& rhs) const
+    {
+      return rhs.empty();
+    }
 
     template <class T>
     result_type
@@ -2222,6 +2601,12 @@ namespace json_logic
   {
     using ArithmeticOperator::result_type;
 
+    result_type
+    operator()(const std::nullptr_t, std::nullptr_t) const
+    {
+      return nullptr;
+    }
+
     template <class T>
     result_type
     operator()(const T& lhs, const T& rhs) const
@@ -2234,6 +2619,12 @@ namespace json_logic
   struct Calc<Max> : ArithmeticOperator
   {
     using ArithmeticOperator::result_type;
+
+    result_type
+    operator()(const std::nullptr_t, std::nullptr_t) const
+    {
+      return nullptr;
+    }
 
     template <class T>
     result_type
@@ -2588,7 +2979,8 @@ namespace json_logic
   Calculator::evalShortCircuit(Operator& n, bool val)
   {
     const int      num = n.num_evaluated_operands();
-    assert(num >= 1);
+
+    if (num == 0) { CXX_UNLIKELY; requiresArgumentError(); }
 
     int            idx   = -1;
     ValueExpr      oper  = eval(n.operand(++idx));
@@ -2757,7 +3149,8 @@ namespace json_logic
     Operator::container_type elems;
     Calculator*              self = this;
 
-    std::copy_if( std::make_move_iterator(n.begin()), std::make_move_iterator(n.end()),
+    // \todo consider making arrays lazy
+    std::transform( std::make_move_iterator(n.begin()), std::make_move_iterator(n.end()),
                   std::back_inserter(elems),
                   [self](AnyExpr&& exp) -> ValueExpr
                   {
