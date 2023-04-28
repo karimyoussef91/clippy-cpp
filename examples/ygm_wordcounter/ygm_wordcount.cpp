@@ -6,6 +6,7 @@
 #include <string>
 #include <functional>
 #include <fstream>
+#include <sstream>
 
 #include <clippy/clippy.hpp>
 #include <ygm/comm.hpp>
@@ -16,7 +17,7 @@
 using namespace ygm_wordcount;
 
 int main(int argc, char **argv) {
-  ygm::comm world(&argc, &argv, 8 * 1024);
+  ygm::comm world(&argc, &argv);
 
   {
     clippy::clippy clip("wordcount", "Distributed word count example");
@@ -39,10 +40,11 @@ int main(int argc, char **argv) {
     for (int i = 0; i < word_files.size(); ++i) {
       if (i % world.size() != world.rank()) continue;
 
-      std::ifstream ifs(word_files[i]);
+      std::fstream ifs;
+      ifs.open(word_files[i]);
       std::string word;
-      while (ifs >> word) {
-        auto counter = [](auto pcomm, int from, const std::string &w) {
+      while (getline(ifs, word)) {
+        auto counter = [](auto pcomm, const std::string &w) {
           pmem_str_t tmp(w.c_str(), table->get_allocator());
           if (table->count(tmp) == 0) {
             table->emplace(std::move(tmp), 1);
@@ -50,8 +52,25 @@ int main(int argc, char **argv) {
             table->at(tmp)++;
           }
         };
-        const int dest = metall::utility::string_hash<std::string, 321>{}(word) % world.size();
-        world.async(dest, counter, word);
+        size_t first_comma = word.find(",");
+        if (first_comma != std::string::npos){
+          std::string author = word.substr(0,first_comma);
+          std::string remainder = word.substr(first_comma + 1, (word.length() - first_comma - 1));
+          size_t second_comma = remainder.find(",");
+          if (second_comma != std::string::npos){
+            std::string subreddit = remainder.substr(0,second_comma);
+            std::string body = remainder.substr(second_comma + 1, (remainder.length() - second_comma - 2));
+            std::stringstream bodyss(body);
+            std::string body_word;
+            while (bodyss >> body_word){
+              std::string key = author + "," + subreddit + "," + body_word;
+              const int dest = metall::utility::string_hash<std::string, 321>{}(body_word) % world.size();
+              world.async(dest, counter, key);
+            }
+          }
+        }
+
+        
       }
     }
     world.barrier();

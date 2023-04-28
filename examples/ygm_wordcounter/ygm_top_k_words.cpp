@@ -53,7 +53,7 @@ int main(int argc, char **argv) {
     // Find the global top k words
     static que_type global_top_k_queue;
     while (!local_top_k_queue.empty()) {
-      auto gather = [](auto pcomm, int from, const std::size_t count, const std::string &word) {
+      auto gather = [](auto pcomm, const std::size_t count, const std::string &word) {
         if (global_top_k_queue.size() < k || global_top_k_queue.top().first < count) {
           global_top_k_queue.emplace(count, word);
         }

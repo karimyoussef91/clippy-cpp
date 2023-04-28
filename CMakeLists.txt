@@ -12,7 +12,9 @@ project(CLIPPy
     DESCRIPTION "Command Line Interface Plus Python"
     LANGUAGES CXX)
 
-include(FetchContent) 
+set(CMAKE_CXX_STANDARD 17)
+
+include(FetchContent)
 
 # Only do these if this is the main project, and not if it is included through add_subdirectory
 if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
@@ -68,7 +70,7 @@ if (NOT Metall_FOUND)
     set(METALL_INSTALL_DIR ${CMAKE_CURRENT_BINARY_DIR}/metall-install)
 		FetchContent_Declare(Metall
         GIT_REPOSITORY https://github.com/LLNL/metall.git
-        GIT_TAG master
+        GIT_TAG privateer2.0
 				)
 #        SOURCE_DIR ${METALL_SOURCE_DIR}
 #        BINARY_DIR ${METALL_BUILD_DIR}
@@ -80,14 +82,15 @@ endif ()
 
 #
 #  cereal
-FetchContent_Declare(cereal
-        URL https://github.com/USCiLab/cereal/archive/refs/tags/v1.3.0.zip
-        )
-FetchContent_GetProperties(cereal)
-if (NOT cereal_POPULATED)
-    FetchContent_Populate(cereal)
+find_package(cereal QUIET)
+if (NOT cereal_FOUND)
+    set(JUST_INSTALL_CEREAL TRUE)
+    FetchContent_Declare(cereal
+            GIT_REPOSITORY https://github.com/USCiLab/cereal.git
+            GIT_TAG master
+            )
+    FetchContent_MakeAvailable(cereal)
 endif ()
-set(cereal_INCLUDE_DIR "${cereal_SOURCE_DIR}/include")
 
 #
 #  MPI
@@ -101,14 +104,14 @@ if (MPI_CXX_FOUND)
         set(JUST_INSTALL_YGM TRUE)
         FetchContent_Declare(YGM
                 GIT_REPOSITORY https://github.com/LLNL/ygm.git
-                GIT_TAG b4fa3105184181a6f6899200e61e4d06dee56903 # master
+                GIT_TAG develop # b4fa3105184181a6f6899200e61e4d06dee56903
                 )
-        FetchContent_GetProperties(YGM)
-        if (NOT ygm_POPULATED)
-            FetchContent_Populate(YGM)
-        endif ()
-        set(YGM_INCLUDE_DIR "${ygm_SOURCE_DIR}/include")
-        # FetchContent_MakeAvailable(YGM)
+        # FetchContent_GetProperties(YGM)
+        # if (NOT ygm_POPULATED)
+        #    FetchContent_Populate(YGM)
+        # endif ()
+        # set(YGM_INCLUDE_DIR "${ygm_SOURCE_DIR}/include")
+        FetchContent_MakeAvailable(YGM)
     endif ()
 endif ()
 
@@ -132,7 +135,7 @@ find_package(Privateer QUIET)
 if (NOT Privateer_FOUND)
    FetchContent_Declare(Privateer
            GIT_REPOSITORY https://github.com/LLNL/Privateer.git
-           GIT_TAG feature/sigaction
+           GIT_TAG b29a5e95ed95002d1c929be06a739845cc003072 # feature/uffd
            )
    FetchContent_MakeAvailable(Privateer)
 endif ()
